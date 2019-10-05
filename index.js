@@ -12,8 +12,8 @@ const apis = {
 };
 
 const regexMapping = {
-  integer: /\d+/,
-  string: /\s+/
+  integer: '\\d+',
+  string: '[A-Za-z]+'
 };
 
 init();
@@ -31,19 +31,34 @@ function createApis(parsedYaml) {
   for (const path of Object.keys(paths)) {
     const details = paths[path];
     for (const method of Object.keys(details)) {
-      const handler = getHandler(details[method]['x-handler']);
+      const regex = generatePathRegex(path, details[method].parameters);
+      const handler = getHandler(details[method]['x-handler']);;
+      // Go ahead only if we have allowed method and handler
       if (apis[method.toUpperCase()] && handler) {
         // TODO: Add validation object to every API
         apis[method.toUpperCase()][path] = {
-          handler
+          handler,
+          regex
         };
       }
     }
   }
 }
 
-function createRegexForPathParams() {
-
+function generatePathRegex(path, parameters) {
+  const basePath = path.split('/')[1];
+  let regexStr = `/${basePath}`;
+  if (!parameters) {
+    return new RegExp(`${regexStr}$`, 'g');
+  }
+  const pathParams = parameters.filter(p => p.in === 'path');
+  if (!pathParams || pathParams && pathParams.length === 0) {
+    return new RegExp(`${regexStr}$`, 'g');
+  }
+  pathParams.forEach(p => {
+    regexStr += `/${regexMapping[p.type]}`;
+  });
+  return new RegExp(`${regexStr}$`, 'g');
 }
 
 function getHandler(handlerName) {
@@ -68,7 +83,7 @@ function handler(request, response) {
   try {
     runSyncMiddlewares(request, response);
     fwdToRightHandler(request, response);
-    NotFoundHandler(request, response);
+    notFoundHandler(request, response);
     // attachBody(request)
     //   .then(() => {
     //     response.json();
@@ -142,11 +157,16 @@ function fwdToRightHandler(request, response) {
     // TODO: Validation
     return apis[method][url].handler(request, response);
   } else {
-    // path params.
+    // looks like we have path params, let's try to find the right handler for this one
+    const routes = Object.keys(apis[method]);
+    const found = routes.filter(r => apis[method][r].regex.test(url));
+    if (found && found.length > 0) {
+      return apis[method][found[0]].handler(request, response);
+    }
   }
 }
 
-function NotFoundHandler(request, response) {
+function notFoundHandler(request, response) {
   return response.json({ message: 'Handler not found'}, 404);
 }
 
